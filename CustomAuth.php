@@ -86,9 +86,6 @@ class CustomAuth extends AuthMethod
     //****  login retry ban or allow code ****//
 
 
-
-    //add first attempt record
-
     /**
      * @param array $arrFields
      * @param $table

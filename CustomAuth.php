@@ -33,6 +33,30 @@ class CustomAuth extends AuthMethod
      */
     public function authenticate($user, $request, $response)
     {
+
+
+        //uncomment the part below to only allow access to a specified IP
+
+      /*     // the ip allowed to access this middleware
+          //set it in config --> params
+
+        $serverIP = Yii::$app->params['serverIP'];
+        $userIP = Yii::$app->request->userIP;
+
+
+
+         // if the IP user has used to access the middleware is not the allowed one. Stop execution
+
+
+        if ($serverIP != $userIP)
+        {
+            $this->unauthorizedIPAccessMessage();
+
+        }
+        */
+
+
+
         list($username, $password) = $request->getAuthCredentials();
 
         if ($this->auth) {
@@ -351,6 +375,17 @@ class CustomAuth extends AuthMethod
     {
         $timeoutRemaining = ($timeout - strtotime("now")) / 60;
         $message = 'Sorry, your IP has been blocked for a while due to '.$this->maxAttempts .' unsuccessful login attempts. Please try again after ' . $timeoutRemaining . ' minutes.';
+        throw new UnauthorizedHttpException($message);
+    }
+
+
+    /**
+     * message to send back if an unauthorized IP tries to access the system
+     * @throws UnauthorizedHttpException
+     */
+    private function unauthorizedIPAccessMessage($timeout)
+    {
+        $message = 'YOU ARE NOT ALLOWED ACCESS TO THE RESOURCE.';
         throw new UnauthorizedHttpException($message);
     }
 

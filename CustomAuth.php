@@ -16,9 +16,10 @@ use yii\web\User;
 class CustomAuth extends AuthMethod
 {
 
-    public $delay = 0.3;
-    public $banned = true;
-    public $auth;
+    private $delay = 5;
+    private $banned = true;
+    private $auth;
+    private $maxAttempts=3;
 
     /**
      * Authenticates the current user.
@@ -49,7 +50,7 @@ class CustomAuth extends AuthMethod
         } elseif ($username !== null) {
             $userIP = Yii::$app->request->userIP;
 
-            $IPIsBanned = $this->isBanned($userIP);
+            $IPIsBanned = $this->isBanned($userIP);  // check if user IP is banned first
 
             if ($IPIsBanned) {
 
@@ -61,6 +62,9 @@ class CustomAuth extends AuthMethod
 
                 $this->bannedMessage($timeout['reset_at']);
             }
+
+
+            //not banned continue execution
 
             $identity = $user->loginByAccessToken($username, get_class($this));
             if ($identity === null) {
@@ -85,6 +89,14 @@ class CustomAuth extends AuthMethod
 
     //add first attempt record
 
+    /**
+     * @param array $arrFields
+     * @param $table
+     * @param $field
+     * @param $fieldParam
+     * @param $fieldValueParam
+     * @return \yii\db\Command
+     */
     private function select($arrFields = [], $table, $field, $fieldParam, $fieldValueParam)
     {
         $connectDb = Yii::$app->db;
@@ -95,9 +107,13 @@ class CustomAuth extends AuthMethod
     }
 
 
-    //isBanned function
-
-    public function update($table, $fields = [], $condition = [])
+    /**
+     * @param $table
+     * @param array $fields
+     * @param array $condition
+     * @throws Exception
+     */
+    private function update($table, $fields = [], $condition = [])
     {
         $connectDb = Yii::$app->db;
         $sql = $connectDb->createCommand()->update($table, $fields, $condition);
@@ -105,9 +121,14 @@ class CustomAuth extends AuthMethod
     }
 
 
-
-
-    public function isBanned($userIP)
+    /**
+     *
+     * checks if userIP is banned
+     * @param $userIP
+     * @return bool
+     * @throws Exception
+     */
+    private function isBanned($userIP)
     {
 
         $getAttemptFromDb = (new Query())
@@ -118,7 +139,7 @@ class CustomAuth extends AuthMethod
 
 
 
-        if ($getAttemptFromDb['attempted'] == 3) {
+        if ($getAttemptFromDb['attempted'] == $this->maxAttempts) {
 
             $timeNow = strtotime("now");
 
@@ -130,6 +151,7 @@ class CustomAuth extends AuthMethod
                     return true;
                 }
 
+                // banned timeout has expired  remove the IP from the blacklist
                 if ($getAttemptFromDb['reset_at'] < $timeNow) {
                     $this->removeEntry($userIP);
                 }
@@ -141,17 +163,24 @@ class CustomAuth extends AuthMethod
 
     }
 
-    public function removeEntry($userIP)
+
+    /**
+     *
+     * remove useIP from the blacklist
+     * @param $userIP
+     * @throws Exception
+     */
+    private function removeEntry($userIP)
     {
 
 
-            $getIpId = (new Query())
-                ->select(['id'])
-                ->from('tbl_failed_logins')
-                ->where(['ip' => $userIP])
-                ->one();
+        $getIpId = (new Query())
+            ->select(['id'])
+            ->from('tbl_failed_logins')
+            ->where(['ip' => $userIP])
+            ->one();
 
-         $removeEntry = Yii::$app->db->createCommand('DELETE FROM tbl_failed_logins WHERE id=:id');
+        $removeEntry = Yii::$app->db->createCommand('DELETE FROM tbl_failed_logins WHERE id=:id');
 
         $removeEntry->bindParam(':id', $id);
         $id=$getIpId['id'];
@@ -160,7 +189,12 @@ class CustomAuth extends AuthMethod
 
     }
 
-    public function delete($table, $id )
+    /**
+     * @param $table
+     * @param $id
+     * @throws Exception
+     */
+    private function delete($table, $id )
     {
 
         $connectDb = Yii::$app->db;
@@ -169,9 +203,14 @@ class CustomAuth extends AuthMethod
     }
 
 
-    //update an attempted failed login
-
-    public function loginSuccessfull($userIP)
+    /**
+     *
+     * on successful login, if the userIP had an entry in the blacklist, maybe 2 attempts or had exceded the max login attempts
+     * but timeout has expired. The entry should be deleted -- kinda like reset to 0 counts
+     * @param $userIP
+     * @throws Exception
+     */
+    private function loginSuccessfull($userIP)
     {
 
 
@@ -194,7 +233,12 @@ class CustomAuth extends AuthMethod
         }
     }
 
-    public function insert($table, $fields = [])
+    /**
+     * @param $table
+     * @param array $fields
+     * @throws Exception
+     */
+    private function insert($table, $fields = [])
     {
         $connectDb = Yii::$app->db;
         $sql = $connectDb->createCommand()->insert($table, $fields);
@@ -202,7 +246,12 @@ class CustomAuth extends AuthMethod
     }
 
 
-    public function banIP($userIP)
+    /**
+     * bans userIP by updating the userIp record with a timeout stamp
+     * @param $userIP
+     * @throws Exception
+     */
+    private function banIP($userIP)
     {
 
         $timeWillBeAbleToLogInAgain = strtotime("now") + ($this->delay * 60); //time now + specified delay in seconds
@@ -210,10 +259,6 @@ class CustomAuth extends AuthMethod
         $this->update('tbl_failed_logins', ['reset_at' => $timeWillBeAbleToLogInAgain,], ['ip' => $userIP]);
         $connection = Yii::$app->getDb();
 
-        /*$connection->createCommand()->insert('tbl_failed_logins', [
-            'reset_at' => $timeWillBeAbleToLogInAgain,
-            'ip' => $userIP,
-        ])->execute();*/
 
     }
 
@@ -221,6 +266,7 @@ class CustomAuth extends AuthMethod
     /**
      * @param $response
      * @throws UnauthorizedHttpException
+     * @throws Exception
      * {@inheritdoc}
      */
 
@@ -231,35 +277,42 @@ class CustomAuth extends AuthMethod
         $this->updateAttempted($userIP);
 
         $query = new Query;
-       $attempts = $query->select(['attempted'])
+        $attempts = $query->select(['attempted'])
             ->from('tbl_failed_logins')
             ->where('ip=:ip', [':ip' => $userIP])
             ->one();
 
-       $remainingAttempts = 3-$attempts['attempted'];
+        $remainingAttempts = $this->maxAttempts-$attempts['attempted'];
 
-        throw new UnauthorizedHttpException('Your request was made with invalid credentials. your IP will be locked out after 3 attempts. you have '.$remainingAttempts.' attempts remaining');
+        throw new UnauthorizedHttpException('Your request was made with invalid credentials. your IP will be locked out after '.$this->maxAttempts.' attempts. you have '.$remainingAttempts.' attempts remaining');
     }
 
 
-    //update an attempted failed login
 
-    public function updateAttempted($userIP)
+
+    /**
+     *
+     * updates the attempted count for a specific userIp in the db every time an the userIP unsuccessfully tries to login
+     * @param $userIP
+     * @throws Exception
+     * @throws UnauthorizedHttpException
+     */
+    private function updateAttempted($userIP)
     {
-                    $query = new Query;
-                    $query->select(['attempted','reset_at'])
-                        ->from('tbl_failed_logins')
-                        ->where('ip=:ip', [':ip' => $userIP])
-                    ->one();
+        $query = new Query;
+        $query->select(['attempted','reset_at'])
+            ->from('tbl_failed_logins')
+            ->where('ip=:ip', [':ip' => $userIP])
+            ->one();
 
 
-            // build and execute the query
+        // build and execute the query
         $getAttemptFromDb = $query->one();
 
-        if ($getAttemptFromDb['attempted'] < 3 || $getAttemptFromDb['attempted'] == NULL) {
+        if ($getAttemptFromDb['attempted'] < $this->maxAttempts || $getAttemptFromDb['attempted'] == NULL) {
 
             $newCount  =$getAttemptFromDb['attempted'] + 1;
-            
+
             if ($getAttemptFromDb['attempted'] == null)      //ip has no failed login entry
             {
 
@@ -292,10 +345,15 @@ class CustomAuth extends AuthMethod
     }
 
 
-    public function bannedMessage($timeout)
+    /**
+     * function to be called if the user is on timeout
+     * @param $timeout
+     * @throws UnauthorizedHttpException
+     */
+    private function bannedMessage($timeout)
     {
         $timeoutRemaining = ($timeout - strtotime("now")) / 60;
-        $message = 'Sorry, your IP has been blocked for a while due to 3  unsuccessful login attempts. Please try again after ' . $timeoutRemaining . ' minutes.';
+        $message = 'Sorry, your IP has been blocked for a while due to '.$this->maxAttempts .' unsuccessful login attempts. Please try again after ' . $timeoutRemaining . ' minutes.';
         throw new UnauthorizedHttpException($message);
     }
 
